@@ -212,3 +212,8 @@ int main() {
 本项目在测试过程中使用了以下优秀的开源库：
 
 * **[cameron314/concurrentqueue](https://github.com/cameron314/concurrentqueue)**: 业界领先的高性能无锁队列实现。本项目在基准测试中将其作为性能标杆进行对比。
+
+
+## 开源协议 (License)
+
+本项目采用 [Apache License 2.0](./LICENSE) 协议开源。

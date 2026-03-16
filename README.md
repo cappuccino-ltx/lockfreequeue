@@ -209,3 +209,7 @@ Aggregate Summary
 This project utilized the following outstanding open-source library during testing:
 
 * **[cameron314/concurrentqueue](https://github.com/cameron314/concurrentqueue)**: An industry-leading, high-performance lock-free queue implementation. This project used it as the ultimate performance benchmark.
+
+## License
+
+This project is licensed under the [Apache License 2.0](./LICENSE).
