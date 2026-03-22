@@ -7,7 +7,7 @@
 #include "runner.hh"
 #include "scenarios.hh"
 
-const size_t N = 50000000;
+const size_t N = 5000000;
 const int repeat = 5;
 
 void test_mpmc(int p, int c){
@@ -49,6 +49,12 @@ void test_mpmc(int p, int c){
             return bench_mpmc<lockfree::lfree_queue<int>, LFreeQueueAdapter<lockfree::lfree_queue<int>>>(N, p, c);
         }, repeat);
         print_result("lfree_queue", scenario, N, time);
+    }
+    {
+        auto time = run_repeated([&]{
+            return bench_mpmc<lockfree::concurrent_queue<int>, LFreeQueueAdapter<lockfree::concurrent_queue<int>>>(N, p, c);
+        }, repeat);
+        print_result("concurrent_queue", scenario, N, time);
     }
     {
         auto time = run_repeated([&]{

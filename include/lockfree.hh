@@ -35,6 +35,7 @@ namespace lockfree{
 enum queue_size {
     K003 = 1llu << 5, // 32
     K01 = 1llu << 7,  // 128
+    K02 = 1llu << 8,  // 256
     K05 = 1llu << 9,  // 512
     K1 = 1llu << 10,  // 1024
     K2 = 1llu << 11,  // 2048
@@ -44,9 +45,23 @@ enum queue_size {
     K32 = 1llu << 15 // 32768
 }; // enum queue_size
 namespace util{
-static inline size_t get_proper_size(std::size_t n){
+static inline size_t glign_to_2_index(long long num){
+    if (num <= 1) {
+        return 1;
+    }
+    num--;
+    num |= num >> 1;
+    num |= num >> 2;
+    num |= num >> 4;
+    num |= num >> 8;
+    num |= num >> 16;
+    num |= num >> 32;
+    return num + 1;
+}
+static inline queue_size get_proper_size(std::size_t n){
     if (n <= queue_size::K003) return queue_size::K003;
     else if (n <= queue_size::K01) return queue_size::K01;
+    else if (n <= queue_size::K02) return queue_size::K02;
     else if (n <= queue_size::K05) return queue_size::K05;
     else if (n <= queue_size::K1) return queue_size::K1;
     else if (n <= queue_size::K2) return queue_size::K2;
@@ -113,7 +128,7 @@ public:
     bool try_put(U&& data){
         size_t tail = tail_r();
         size_t head = head_r();
-        int index = tail % queue_size_;
+        int index = tail & (queue_size_ - 1);
         size_t seqence = seqence_a(index);
         if (seqence == tail) {
             if (tail_cas(tail)){
@@ -129,7 +144,7 @@ public:
     bool try_get(T& data) {
         size_t tail = tail_r();
         size_t head = head_r();
-        int index = head % queue_size_;
+        int index = head & (queue_size_ - 1);
         size_t seqence = seqence_a(index);
         if (seqence == head + 1) {
             if (head_cas(head)){
@@ -147,6 +162,12 @@ public:
         size_t h = head_r();
         size_t t = tail_r();
         return t - h;
+    }
+    
+    bool is_full(){
+        size_t h = head_r();
+        size_t t = tail_r();
+        return t - h == queue_size_;
     }
 
 private:
@@ -232,6 +253,12 @@ public:
         return t - h;
     }
 
+    bool is_full(){
+        size_t h = head_r();
+        size_t t = tail_r();
+        return t - h == queue_size_;
+    }
+
 private:
     inline size_t head_r(){
         return head_.load(std::memory_order_relaxed);
@@ -268,7 +295,7 @@ public:
         :queues_(consume_n, nullptr),queue_size_(consume_n)
     {
         for (int i = 0; i < consume_n; i++) {
-            queues_[i] = std::make_shared<lfree_queue<T>>(size);
+            queues_[i] = std::make_shared<lfree_queue<T>>(util::get_proper_size(size / consume_n));
         }
     }
 
@@ -316,6 +343,15 @@ public:
         return ret;
     }
 
+    bool is_full(){
+        for (auto& q : queues_) {
+            if(!q->is_full()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
 private:
     int next_id(){
         assert(next_id_.load(std::memory_order_acquire) < queue_size_);
@@ -339,7 +375,7 @@ public:
         :queues_(producer_n, nullptr),queue_size_(producer_n)
     {
         for (int i = 0; i < producer_n; i++) {
-            queues_[i] = std::make_shared<lfree_queue_spsc<T>>(size);
+            queues_[i] = std::make_shared<lfree_queue_spsc<T>>(util::get_proper_size(size / producer_n));
         }
     }
 
@@ -373,6 +409,14 @@ public:
         }
         return ret;
     }
+    bool is_full(){
+        for (auto& q : queues_) {
+            if(!q->is_full()) {
+                return false;
+            }
+        }
+        return true;
+    }
 
 private:
     int next_id(){
@@ -399,7 +443,7 @@ public:
         ,consumer_n_(consumer_n)
     {
         for (int i = 0; i < producer_n_; i++) {
-            queues_[i] = std::make_shared<lfree_queue_spmc<T>>(consumer_n_, size);
+            queues_[i] = std::make_shared<lfree_queue_spmc<T>>(consumer_n_, util::get_proper_size(size / consumer_n_));
         }
     }
 
@@ -437,7 +481,14 @@ public:
         }
         return ret;
     }
-
+    bool is_full(){
+        for (auto& q : queues_) {
+            if(!q->is_full()) {
+                return false;
+            }
+        }
+        return true;
+    }
     void set_task_limit(int limit){
         task_limit_ = limit;
     }
@@ -457,5 +508,78 @@ private:
     int producer_n_;
     int task_limit_ = LOCKFREE_QUEUE_MPMC_DEFALUT_TASK_LIMIT;
 }; // template class lfree_queue_mpmc
+
+template<class T>
+class concurrent_queue {
+public:
+    concurrent_queue(int thread_num = std::thread::hardware_concurrency(), lockfree::queue_size size = queue_size::K01)
+        :queues_(thread_num, nullptr),queue_size_(thread_num)
+    {
+        for (int i = 0; i < thread_num; i++) {
+            queues_[i] = std::make_shared<lfree_queue<T>>(util::get_proper_size(size / thread_num));
+        }
+    }
+
+    template<typename U>
+    bool try_put(U&& data){
+        uint64_t tail = tail_a();
+        while (tail_cas(tail)) {
+            uint64_t index = tail % queue_size_;
+            return queues_[index]->try_put(std::forward<U>(data));
+        }
+        return false;
+    }
+    
+    bool try_get(T& data) {
+        uint64_t head = head_a();
+        while(head_cas(head)){
+            uint64_t index = head % queue_size_;
+            return queues_[index]->try_get(data);
+        }
+        return false;
+    }
+
+    size_t size_approx(){
+        size_t ret = 0;
+        for (auto& q : queues_) {
+            ret += q->size_approx();
+        }
+        return ret;
+    }
+    bool is_full(){
+        for (auto& q : queues_) {
+            if(!q->is_full()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+private:
+    inline size_t head_r(){
+        return head_.load(std::memory_order_relaxed);
+    }
+    inline size_t head_a(){
+        return head_.load(std::memory_order_acquire);
+    }
+    inline bool head_cas(size_t& h){
+        return head_.compare_exchange_strong(h, h + 1, std::memory_order_acq_rel,std::memory_order_relaxed);
+    }
+    inline size_t tail_r(){
+        return tail_.load(std::memory_order_relaxed);
+    }
+    inline size_t tail_a(){
+        return tail_.load(std::memory_order_acquire);
+    }
+    inline bool tail_cas(size_t& t){
+        return tail_.compare_exchange_strong(t, t + 1, std::memory_order_acq_rel,std::memory_order_relaxed);
+    }
+
+private:
+    std::vector<std::shared_ptr<lfree_queue<T>>> queues_;
+    alignas(64) std::atomic_uint64_t head_ { 0 };
+    alignas(64) std::atomic_uint64_t tail_ { 0 };
+    int queue_size_;
+}; // template class concurrent_queue
 
 } // namespace lockfree
