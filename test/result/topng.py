@@ -12,6 +12,7 @@ def plot_benchmark(csv_file, output_dir="plots"):
         .str.replace(" Mops/sec", "", regex=False)
         .astype(float)
     )
+    output_dir = f"{output_dir}/{csv_file}";
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -85,4 +86,3 @@ def plot_benchmark(csv_file, output_dir="plots"):
     print(f"Plots saved to: {output_dir}")
 
 plot_benchmark("5000000")
-plot_benchmark("50000000")

@@ -18,7 +18,7 @@ If you are in need of a lock-free queue and your use case is clearly defined (i.
 
 ## Core Functions
 
-This project implements 5 specialized queues:
+This project implements 6 specialized queues:
 - `lfree_queue`: The most basic, general-purpose lock-free queue.
 - `lfree_queue_spsc`: Exclusively for **Single-Producer Single-Consumer** scenarios.
 - `lfree_queue_spmc`: Designed for **Single-Producer Multi-Consumer** scenarios.
@@ -30,7 +30,7 @@ This project implements 5 specialized queues:
 
 The standard `lockfree_queue` is a ring buffer that relies on the CAS (Compare-And-Swap) concept to achieve lock-free access. However, when the crowd of producers and consumers gets too large, CAS contention turns into a bloodbath. Only one thread can win the CAS lottery at a time, leading to a noticeable drop in performance. (The chart below shows the average benchmark results for producing/consuming 5,000,000 items, looped 5 times under varying thread counts).
 
-![lfree_queue performance comparison](test/result/plots/5000000_lfree_queue.png)
+![lfree_queue performance comparison](test/result/plots/5000000/5000000_lfree_queue.png)
 
 This sparked an idea: why not design specialized queues separately for different scenarios? If the battlefield is predictable, the design becomes a breeze. Of course, these scenario-specific queues must be used sensibly. If you don't honor the exact producer and consumer counts you promised upon creation, the program will mercilessly `assert` and terminate.
 
@@ -70,9 +70,24 @@ The producer inserts items round-robin into the N consumer sub-queues *within it
 
 *The Catch*: This design spawns *a lot* of queues. Producers have queues, and consumers have sub-queues inside every producer's queue. Therefore, when using this specific queue, I highly recommend keeping the specified queue length as small as reasonably possible.
 
+### `concurrent_queue`
+
+The performance of the previous four exclusive scenario queues was stable in their respective scenarios, but there were certain limitations. If consumers and producers are uncertain in some scenarios, the above queues cannot be used
+
+For the lfree_queue queue, although it can be used in situations where the number of producers and consumers is uncertain, it is only limited to situations where the quantity is relatively small. If the quantity increases, its performance will become very poor
+
+So 'concurrent queue' was born, which is also a reuse of 'lfree_queue', but the design concept is completely different from the above queues
+In the mpsc, spmc, and mpmc queues, the way to improve the success rate of cas operations is to give each thread a local queue. However, when designing the concurrent queue, the original intention was to improve performance without relying on the number of threads, so the approach of having a local queue for each thread cannot be adopted  
+
+So in the design of 'concurrent queue', the strategy of 'segmented cas' is adopted. I replaced each' segment 'with' lfree_queue ', and for each segment, if you want to produce or consume in this segment, you must first compete for the right to use this segment  
+
+It is worth noting that in the competition of segments, it is not strict competition, but rather a relatively relaxed rule, which may result in multiple threads still running cas on the same segment. Therefore, the number of segments N is quite important. If the size of N is set appropriately, it can greatly reduce the success rate of cas on the same segment, but it cannot be too large
+
+In implementation, the size of N is the number of cores in the machine, but you can pass parameters to it when constructing the queue to set the number of segments. In my preliminary testing process, I found that if the number of segments is 2 to 3 times that of the access thread, the performance is optimal. During use, actual testing should prevail. If any colleagues test the best value of N, they can also give feedback
+
 ## API Design
 
-All five defined queues share the exact same interface:
+All six defined queues share the exact same interface:
 
 ```C++
 construction(/*mp*/int producer_n, /*mc*/int consumer_n, size_t queue_size);
@@ -168,14 +183,13 @@ The queues participating in the showdown are listed below. I brought in `cameron
 - `lfree_queue_mpsc`
 - `lfree_queue_mpmc`
 - `lfree_queue`
+- `concurrent_queue`
 - `cameron314/concurrentqueue`
 
 **Test Conditions:**
 
-1. Produce and consume `5,000,000` items, record the time. Repeat 5 times and take the average.
-2. Produce and consume `50,000,000` items, record the time. Repeat 5 times and take the average.
+Produce and consume `5,000,000` items, record the time. Repeat 5 times and take the average.
 
-Ultimately, the charts generated from **Condition 2** were selected for display.
 
 ### Test Results
 
@@ -185,19 +199,19 @@ This document only highlights a few charts. If you're interested in the deep div
 
 1P1C Performance Comparison
 
-![1p1c](./test/result/plots/comparison_1P1C.png)
+![1p1c](./test/result/plots/5000000/comparison_1P1C.png)
 
 ~4P4C Performance Comparison
 
-![4p4c](./test/result/plots/comparison_4P4C.png)
+![4p4c](./test/result/plots/5000000/comparison_4P4C.png)
 
 ~8P8C Performance Comparison
 
-![8p8c](./test/result/plots/comparison_8P8C.png)
+![8p8c](./test/result/plots/5000000/comparison_8P8C.png)
 
 Aggregate Summary
 
-![all](./test/result/plots/all_queues.png)
+![all](./test/result/plots/5000000/all_queues.png)
 
 ### Benchmark Notes
 * **Baseline Target**: `ConcurrentQueue` (Developed by [cameron314](https://github.com/cameron314))
